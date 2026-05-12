@@ -20,7 +20,7 @@ RSpec.shared_examples "an ActiveJob backend that records messaging span data on 
     expect(data["messaging.destination.name"]).to eq("critical")
   end
 
-  it "omits messaging.message.retry.count on the first execution" do
+  it "omits messaging.message.retry.count for non-retryable jobs" do
     successful_job.perform_later
     drain
 
@@ -28,18 +28,32 @@ RSpec.shared_examples "an ActiveJob backend that records messaging span data on 
     expect(data).not_to have_key("messaging.message.retry.count")
   end
 
-  it "records messaging.message.retry.count = executions - 1 on retried executions" do
-    klass = job_fixture do
-      def perform; end
+  context "when the job is retryable" do
+    let(:retryable_job) do
+      job_fixture do
+        retry_on StandardError, attempts: 3, wait: 0
+
+        def perform; end
+      end
     end
 
-    allow_any_instance_of(klass).to receive(:executions).and_return(3)
+    it "records messaging.message.retry.count = 0 on the first execution" do
+      retryable_job.perform_later
+      drain
 
-    klass.perform_later
-    drain
+      data = consumer_transaction.contexts.dig(:trace, :data)
+      expect(data["messaging.message.retry.count"]).to eq(0)
+    end
 
-    data = consumer_transaction.contexts.dig(:trace, :data)
-    expect(data["messaging.message.retry.count"]).to eq(2)
+    it "records messaging.message.retry.count = executions - 1 on retried executions" do
+      allow_any_instance_of(retryable_job).to receive(:executions).and_return(3)
+
+      retryable_job.perform_later
+      drain
+
+      data = consumer_transaction.contexts.dig(:trace, :data)
+      expect(data["messaging.message.retry.count"]).to eq(2)
+    end
   end
 
   it "records messaging.message.receive.latency in milliseconds", skip: RAILS_VERSION < 6.1 do

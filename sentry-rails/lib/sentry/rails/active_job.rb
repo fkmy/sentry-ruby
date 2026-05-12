@@ -139,8 +139,8 @@ module Sentry
             transaction.set_data(Sentry::Span::DataConventions::MESSAGING_MESSAGE_ID, job.job_id)
             transaction.set_data(Sentry::Span::DataConventions::MESSAGING_DESTINATION_NAME, job.queue_name)
 
-            if job.executions && job.executions > 1
-              transaction.set_data(Sentry::Span::DataConventions::MESSAGING_MESSAGE_RETRY_COUNT, job.executions - 1)
+            if job.class.rescue_handlers.any?
+              transaction.set_data(Sentry::Span::DataConventions::MESSAGING_MESSAGE_RETRY_COUNT, [job.executions.to_i - 1, 0].max)
             end
 
             if (latency = compute_latency(job))
