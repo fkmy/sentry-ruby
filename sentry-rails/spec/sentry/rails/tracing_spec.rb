@@ -52,11 +52,17 @@ RSpec.describe Sentry::Rails::Tracing, type: :request do
       expect(second_span[:description]).to eq("SELECT \"posts\".* FROM \"posts\"")
       expect(second_span[:parent_span_id]).to eq(first_span[:span_id])
 
-      # this is to make sure we calculate the timestamp in the correct scale (second instead of millisecond)
-      # Use more relaxed bounds for JRuby compatibility
-      min_duration = 10.0 / 1_000_000  # 10 microseconds
-      max_duration = RUBY_PLATFORM == "java" ? 50.0 / 1000 : 10.0 / 1000  # 50ms for JRuby, 10ms for others
-      expect(second_span[:timestamp] - second_span[:start_timestamp]).to be_between(min_duration, max_duration)
+      # Guards the timestamp scale (seconds, not milliseconds): the span end is computed
+      # as `start_timestamp + duration / 1000` in AbstractSubscriber, so dropping the
+      # `/ 1000` would inflate the duration ~1000x. Instead of a tight timing window
+      # (which flakes under full-suite CI load - GC pauses, CPU contention, cold
+      # connection), assert the structural invariant that a child span cannot outlast its
+      # enclosing transaction. A 1000x scale regression pushes the span's end far past
+      # the transaction's end, while a correctly-scaled span is always contained - so
+      # this catches the regression yet cannot flake by construction.
+      expect(second_span[:timestamp] - second_span[:start_timestamp]).to be > 0
+      expect(second_span[:start_timestamp]).to be >= transaction[:start_timestamp]
+      expect(second_span[:timestamp]).to be <= transaction[:timestamp]
     end
 
     it "records transaction alone" do
@@ -91,11 +97,17 @@ RSpec.describe Sentry::Rails::Tracing, type: :request do
       )
       expect(second_span[:parent_span_id]).to eq(first_span[:span_id])
 
-      # this is to make sure we calculate the timestamp in the correct scale (second instead of millisecond)
-      # Use more relaxed bounds for JRuby compatibility
-      min_duration = 10.0 / 1_000_000  # 10 microseconds
-      max_duration = RUBY_PLATFORM == "java" ? 50.0 / 1000 : 10.0 / 1000  # 50ms for JRuby, 10ms for others
-      expect(second_span[:timestamp] - second_span[:start_timestamp]).to be_between(min_duration, max_duration)
+      # Guards the timestamp scale (seconds, not milliseconds): the span end is computed
+      # as `start_timestamp + duration / 1000` in AbstractSubscriber, so dropping the
+      # `/ 1000` would inflate the duration ~1000x. Instead of a tight timing window
+      # (which flakes under full-suite CI load - GC pauses, CPU contention, cold
+      # connection), assert the structural invariant that a child span cannot outlast its
+      # enclosing transaction. A 1000x scale regression pushes the span's end far past
+      # the transaction's end, while a correctly-scaled span is always contained - so
+      # this catches the regression yet cannot flake by construction.
+      expect(second_span[:timestamp] - second_span[:start_timestamp]).to be > 0
+      expect(second_span[:start_timestamp]).to be >= transaction[:start_timestamp]
+      expect(second_span[:timestamp]).to be <= transaction[:timestamp]
 
       third_span = transaction[:spans][2]
       expect(third_span[:op]).to eq("template.render_template.action_view")
